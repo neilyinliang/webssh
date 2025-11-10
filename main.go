@@ -1,134 +1,51 @@
-package main
+package handler
 
 import (
-	"embed"
-	"flag"
-	"fmt"
-	"io/fs"
-	"net/http"
 	"os"
 	"strconv"
-	"strings"
-	"time"
-	"webssh/controller"
 
-	"github.com/gin-contrib/gzip"
-	"github.com/gin-gonic/gin"
+	"github.com/appwrite/sdk-for-go/appwrite"
+	"github.com/open-runtimes/types-for-go/v4/openruntimes"
 )
 
-//go:embed public/*
-var f embed.FS
-
-var (
-	port       = flag.Int("p", 8888, "服务运行端口")
-	v          = flag.Bool("v", false, "显示版本号")
-	authInfo   = flag.String("a", "", "开启账号密码登录验证, '-a user:pass'的格式传参")
-	timeout    int
-	savePass   bool
-	version    string
-	buildDate  string
-	goVersion  string
-	gitVersion string
-	username   string
-	password   string
-)
-
-func init() {
-	flag.IntVar(&timeout, "t", 120, "ssh连接超时时间(min)")
-	flag.BoolVar(&savePass, "s", true, "保存ssh密码")
-	if envVal, ok := os.LookupEnv("savePass"); ok {
-		if b, err := strconv.ParseBool(envVal); err == nil {
-			savePass = b
-		}
-	}
-	if envVal, ok := os.LookupEnv("authInfo"); ok {
-		*authInfo = envVal
-	}
-	if envVal, ok := os.LookupEnv("port"); ok {
-		if b, err := strconv.Atoi(envVal); err == nil {
-			*port = b
-		}
-	}
-	flag.Parse()
-	if *v {
-		fmt.Printf("Version: %s\n\n", version)
-		fmt.Printf("BuildDate: %s\n\n", buildDate)
-		fmt.Printf("GoVersion: %s\n\n", goVersion)
-		fmt.Printf("GitVersion: %s\n\n", gitVersion)
-		os.Exit(0)
-	}
-	if *authInfo != "" {
-		accountInfo := strings.Split(*authInfo, ":")
-		if len(accountInfo) != 2 || accountInfo[0] == "" || accountInfo[1] == "" {
-			fmt.Println("请按'user:pass'的格式来传参或设置环境变量, 且账号密码都不能为空!")
-			os.Exit(0)
-		}
-		username, password = accountInfo[0], accountInfo[1]
-	}
+type Response struct {
+	Motto       string `json:"motto"`
+	Learn       string `json:"learn"`
+	Connect     string `json:"connect"`
+	GetInspired string `json:"getInspired"`
 }
 
-func main() {
-    server := gin.New()
-    server.Use(gin.Recovery())
-    server.SetTrustedProxies(nil)
-    server.Use(gzip.Gzip(gzip.DefaultCompression))
+// This Appwrite function will be executed every time your function is triggered
+func Main(Context openruntimes.Context) openruntimes.Response {
+	// You can use the Appwrite SDK to interact with other services
+	// For this example, we're using the Users service
+	client := appwrite.NewClient(
+		appwrite.WithEndpoint(os.Getenv("APPWRITE_FUNCTION_API_ENDPOINT")),
+		appwrite.WithProject(os.Getenv("APPWRITE_FUNCTION_PROJECT_ID")),
+		appwrite.WithKey(Context.Req.Headers["x-appwrite-key"]),
+	)
+	users := appwrite.NewUsers(client)
 
-	// --- API Routes ---
-	// No BasicAuth for API routes as per original logic.
-	// If auth is needed for APIs, these routes should be moved inside the auth-enabled group below.
-	server.GET("/term", func(c *gin.Context) {
-		controller.TermWs(c, time.Duration(timeout)*time.Minute)
-	})
-	server.GET("/check", func(c *gin.Context) {
-		responseBody := controller.CheckSSH(c)
-		responseBody.Data = map[string]interface{}{
-			"savePass": savePass,
-		}
-		c.JSON(200, responseBody)
-	})
-	file := server.Group("/file")
-	{
-		file.GET("/list", func(c *gin.Context) {
-			c.JSON(200, controller.FileList(c))
-		})
-		file.GET("/download", func(c *gin.Context) {
-			controller.DownloadFile(c)
-		})
-		file.POST("/upload", func(c *gin.Context) {
-			c.JSON(200, controller.UploadFile(c))
-		})
-		file.GET("/progress", func(c *gin.Context) {
-			controller.UploadProgressWs(c)
-		})
+	response, err := users.List()
+	if err != nil {
+		Context.Error("Could not list users: " + err.Error())
+	} else {
+		// Log messages and errors to the Appwrite Console
+		// These logs won't be seen by your end users
+		Context.Log("Total users: " + strconv.Itoa(response.Total))
 	}
 
-	// --- Static Files & SPA Frontend ---
-	// Serve static files from the 'static' directory
-	staticFS, _ := fs.Sub(f, "public/static")
-	server.StaticFS("/static", http.FS(staticFS))
-	
-	// For any other route, serve the index.html file.
-	// This makes it compatible with Vue Router's history mode.
-	server.NoRoute(func(c *gin.Context) {
-		if *authInfo != "" {
-			// If auth is enabled, check credentials.
-			// This is a simplified check. For production, use a proper session/token mechanism.
-			user, pass, hasAuth := c.Request.BasicAuth()
-			if !hasAuth || user != username || pass != password {
-				c.Header("WWW-Authenticate", `Basic realm="Restricted"`)
-				c.AbortWithStatus(http.StatusUnauthorized)
-				return
-			}
-		}
-		
-		indexHTML, err := f.ReadFile("public/index.html")
-		if err != nil {
-			c.String(http.StatusInternalServerError, "index.html not found")
-			return
-		}
-		c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
-	})
+	// The req object contains the request data
+	if Context.Req.Path == "/ping" {
+		// Use res object to respond with text(), json(), or binary()
+		// Don't forget to return a response!
+		return Context.Res.Text("Pong")
+	}
 
-	fmt.Printf("Github：https://github.com/eooce/webssh\n")
-	server.Run(fmt.Sprintf(":%d", *port))
+	return Context.Res.Json(Response{
+		Motto:       "Build like a team of hundreds_",
+		Learn:       "https://appwrite.io/docs",
+		Connect:     "https://appwrite.io/discord",
+		GetInspired: "https://builtwith.appwrite.io",
+	})
 }
